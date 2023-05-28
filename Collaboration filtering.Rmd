@@ -1,0 +1,223 @@
+---
+title: "Collaboration filtering"
+author: "Wenxuan Zhu"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(skimr)
+
+ratings <- read.csv("/Users/zhuwenxuan/Desktop/365 final project/R_film_data.csv")
+```
+
+```{r}
+themeEF <- function(){
+dark_text = "steelblue4"
+light_text = "slategrey"
+  theme_minimal()+
+  theme(text = element_text(color = light_text, family = "mono"), 
+        plot.title = element_text(color = dark_text, family = "mono"), 
+        axis.text = element_text(color = light_text, family = "mono"))
+}
+
+# scale_fill_manual(values = c("#A4ADAF", "#D4451F", "#01426A"))
+```
+
+# Data cleaning / matrix
+```{r}
+# data cleaning / matrix
+# movies <- read.csv("/Users/zhuwenxuan/Desktop/365 final project/ml-latest-small/movies.csv")
+# ratings <- read.csv("/Users/zhuwenxuan/Desktop/365 final project/ml-latest-small/ratings.csv")
+
+
+# dense_movies <- ratings %>% select(movieId) %>% distinct() %>% rowid_to_column()
+# ratings <- ratings %>% inner_join(dense_movies) %>% rename(movieIdDense = rowid)
+# ratings <- ratings %>% inner_join(movies) %>% select(userId, movieIdDense, rating, title, genres)
+# 
+# write.csv(ratings, "R_film_data.csv", row.names = FALSE)
+```
+
+```{r}
+max(ratings$movieIdDense)
+max(ratings$userId)
+max(ratings$rating)
+```
+
+# Data visualization 
+```{r Plot: aveScore}
+ratings %>% 
+  group_by(userId) %>% 
+  mutate(aveScore = mean(rating)) %>% 
+  ggplot(aes(x = userId, y = aveScore)) +
+  geom_point(color = "#01426A") + 
+  geom_smooth(method = lm, color = "#D4451F") + 
+  themeEF() +
+  labs(title = "Average rating score for each user")
+```
+```{r}
+# scale_fill_manual(values = c("#A4ADAF", "#D4451F", "#01426A"))
+ratings %>% 
+  mutate(year = str_extract(title, "(?<=\\()\\d{4}(?=\\))")) %>% 
+  filter(!is.na(year)) %>% 
+  group_by(year) %>% 
+  summarise(film_count = n()) %>% 
+  mutate(mean_year_count = mean(film_count)) %>%  
+  ggplot(aes(x = year, y = film_count)) +
+  geom_col(col = "#01426A", fill = "#A4ADAF") +
+  geom_vline(xintercept = 1985-1902, color = "#D4451F", linetype = "dashed") +  
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  themeEF() +
+  scale_x_discrete(breaks = seq(1902, 2018, by = 3)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Number of flims each year",
+       subtitle = "Red dash: 1985")
+```
+
+# SVT / matrix completion
+```{r}
+library(filling)
+```
+
+# replace NA values with 0
+# UImatrix[is.na(UImatrix)] <- 0
+
+# convert UImatrix to a matrix
+# UImatrix <- as.matrix(UImatrix)
+
+## subset!
+subset_rows <- sample(1:nrow(UImatrix), 100)
+UImatrix_sub <- UImatrix[subset_rows, ]
+
+# check for empty columns
+UImatrix_sub <- UImatrix_sub[, colSums(is.na(UImatrix_sub)) != nrow(UImatrix_sub)]
+
+subset_cols <- sample(1:ncol(UImatrix_sub), 2000)
+
+# subset the UImatrix
+UImatrix_sub <- UImatrix_sub[, subset_cols]
+
+# convert UImatrix to a matrix
+UImatrix_sub <- as.matrix(UImatrix_sub)
+
+# find the maximum value ignoring missing values
+# max(UImatrix_sub, na.rm = TRUE)
+
+
+```{r}
+UImatrix <- pivot_wider(ratings, id_cols = userId, names_from = movieIdDense, values_from = rating) 
+# convert UImatrix to a matrix
+# UImatrix <- as.matrix(UImatrix)
+
+## subset!
+subset_rows <- sample(1:nrow(UImatrix), 100)
+UImatrix_sub <- UImatrix[subset_rows, ]
+
+# check for empty columns
+UImatrix_sub <- UImatrix_sub[, colSums(is.na(UImatrix_sub)) != nrow(UImatrix_sub)]
+subset_cols <- sample(1:ncol(UImatrix_sub), 2000)
+
+# subset the UImatrix
+UImatrix_sub <- UImatrix_sub[, subset_cols]
+
+# get corresponding movie titles
+movie_titles <- ratings$title[match(colnames(UImatrix_sub), ratings$movieIdDense)]
+
+# set column names of UImatrix_sub to corresponding movie titles
+colnames(UImatrix_sub) <- movie_titles
+
+# convert UImatrix to a matrix
+UImatrix_sub <- as.matrix(UImatrix_sub)
+```
+
+
+```{r grid search, cache=TRUE}
+# create a sequence of lambda values to try
+lambda_seq <- seq(0.001, 1.001, by = 0.05)
+
+# initialize an empty data frame to store the results
+results <- data.frame(lambda = numeric(),
+                      rmse = numeric())
+
+# loop through each lambda value and compute RMSE
+for (lambda in lambda_seq) {
+  # apply SVT with current lambda value
+  svt_result <- fill.SVT(UImatrix_sub, lambda = lambda, maxiter = 50, tol = 0.01)
+  # extract the completed matrix
+  UImatrix_filled <- as.matrix(svt_result$X)
+  # calculate the RMSE between the original matrix and the completed matrix
+  rmse <- sqrt(mean((UImatrix_sub - UImatrix_filled)^2, na.rm = TRUE))
+  # add the results to the data frame
+  results <- results %>% add_row(lambda = lambda, rmse = rmse)
+}
+
+# find the lambda value with the lowest RMSE
+best_lambda <- results %>% filter(rmse == min(rmse)) %>% pull(lambda)
+
+best_lambda
+```
+
+```{r, cache=TRUE}
+# full matrix
+# SVT <- fill.SVT(UImatrix, lambda = 1, maxiter = 50, tol = 0.01)
+```
+
+```{r, cache=TRUE}
+# subset matrix using best_lambda
+SVTsubBest <- fill.SVT(UImatrix_sub, lambda = 0.001, maxiter = 50, tol = 0.001)
+
+head(sort(SVTsubBest$X, decreasing = TRUE))
+SVTsub_matrix <- as.matrix(SVTsubBest$X)
+```
+
+
+# Recommonder system 
+## Cosine simlarity
+
+```{r}
+library(lsa)
+
+# compute cosine similarity between users
+cos_sim <- cosine(as.matrix(SVTsub_matrix))
+
+colnames(cos_sim) <- movie_titles
+
+diag(cos_sim) <- 0
+```
+
+```{r}
+# function to get top n similar items for a given item
+get_top_n_items <- function(user, num) {
+  n <- num
+  # get the similarity scores for the item of interest
+  scores <- sort(cos_sim[user, ], decreasing = TRUE)
+  # get the indices of the top n similar items
+  top_n_indices <- names(scores)[1:n]
+  # get the corresponding scores
+  top_n_scores <- scores[1:n]
+  return(data.frame(item = top_n_indices, score = top_n_scores))
+}
+
+# example usage: get top 13 recommended items for user 3
+top_n_items <- get_top_n_items(3, 13)
+top_n_items
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
